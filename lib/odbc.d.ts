@@ -205,6 +205,11 @@ declare namespace odbc {
 
   function pool(connectionString: string): Promise<Pool>;
   function pool(connectionObject: PoolParameters): Promise<Pool>;
+
+  const SQL_TXN_READ_UNCOMMITTED: number;
+  const SQL_TXN_READ_COMMITTED: number;
+  const SQL_TXN_REPEATABLE_READ: number;
+  const SQL_TXN_SERIALIZABLE: number;
 }
 
 export = odbc;
