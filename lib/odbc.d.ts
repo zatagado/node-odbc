@@ -143,6 +143,10 @@ declare namespace odbc {
     rollback(): Promise<void>;
 
     close(): Promise<void>;
+
+    connected(): boolean;
+
+    autocommit(): boolean;
   }
 
   class Pool {
