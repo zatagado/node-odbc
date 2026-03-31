@@ -9,21 +9,22 @@ jobs:
     strategy:
       matrix:
         node-version:
-          - 18.x
+          - 20.x
         os:
           - windows-2022
           - ubuntu-22.04
-          # arm64
-          - macos-14
-          # x86_64
-          - macos-13
+          - macos-15
+          - macos-15-intel
     runs-on: ${{ matrix.os }}
     steps:
     - uses: actions/checkout@v2
     - name: Use Node.js ${{ matrix.node-version }}
-      uses: actions/setup-node@v3
+      uses: actions/setup-node@v4
       with:
         node-version: ${{ matrix.node-version }}
+    - name: Install dependencies
+      if: ${{ startsWith(matrix.os, 'ubuntu') }}
+      run: sudo apt install -y unixodbc-dev
     - name: Install Build Dependencies
       if: ${{ startsWith(matrix.os, 'macos') }}
       run: brew install unixodbc
