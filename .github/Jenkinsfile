@@ -1,11 +1,11 @@
 pipeline {
 	agent {
     node {
-      label 'ibmi7.3'
+      label 'node-addons'
     }
   }
   environment {
-     NODE_PATH = '/QOpenSys/pkgs/lib/nodejs18/bin'
+     NODE_PATH = '/QOpenSys/pkgs/lib/nodejs20/bin'
   }
   stages {
     stage('build') {
