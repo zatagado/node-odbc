@@ -556,6 +556,26 @@ parse_query_options
   }
   // END .initialBufferSize
 
+  // .multipleResultSets property
+  if (options_object.HasOwnProperty(QueryOptions::MULTIPLE_RESULT_SETS_PROPERTY))
+  {
+    Napi::Value multiple_rs_value =
+      options_object.Get(QueryOptions::MULTIPLE_RESULT_SETS_PROPERTY);
+
+    if (!multiple_rs_value.IsBoolean())
+    {
+      return Napi::TypeError::New(env, std::string("Connection.query options: .") + QueryOptions::MULTIPLE_RESULT_SETS_PROPERTY + " must be a BOOLEAN value.").Value();
+    }
+
+    query_options->multiple_result_sets = multiple_rs_value.As<Napi::Boolean>().Value();
+  }
+  // END .multipleResultSets
+
+  if (query_options->multiple_result_sets && query_options->use_cursor)
+  {
+    return Napi::TypeError::New(env, "ODBC options: .multipleResultSets cannot be used together with .cursor or .fetchSize.").Value();
+  }
+
   return env.Null();
 }
 
@@ -906,13 +926,26 @@ class QueryAsyncWorker : public ODBCAsyncWorker {
           if (!data->query_options.use_cursor)
           {
             bool alloc_error = false;
-            return_code =
-            fetch_all_and_store
-            (
-              data,
-              true,
-              &alloc_error
-            );
+            if (data->query_options.multiple_result_sets)
+            {
+              return_code =
+              fetch_multiple_result_sets
+              (
+                data,
+                true,
+                &alloc_error
+              );
+            }
+            else
+            {
+              return_code =
+              fetch_all_and_store
+              (
+                data,
+                true,
+                &alloc_error
+              );
+            }
             if (alloc_error)
             {
               SetError("[odbc] Error allocating or reallocating memory when fetching data. No ODBC error information available.\0");
@@ -954,6 +987,33 @@ class QueryAsyncWorker : public ODBCAsyncWorker {
         {
           env.Null(),
           cursorObject
+        };
+
+        Callback().Call(callbackArguments);
+      }
+      else if (data->query_options.multiple_result_sets)
+      {
+        Napi::Array outer = Napi::Array::New(env);
+
+        for (size_t i = 0; i < data->result_set_snapshots.size(); i++)
+        {
+          ResultSetSnapshot snap = std::move(data->result_set_snapshots[i]);
+          data->columns = snap.columns;
+          data->column_count = snap.column_count;
+          data->rowCount = snap.rowCount;
+          data->storedRows = std::move(snap.storedRows);
+
+          Napi::Array inner = process_data_for_napi(env, data, napiParameters.Value());
+
+          outer.Set(i, inner);
+          free_unbound_columns(data);
+        }
+        data->result_set_snapshots.clear();
+
+        std::vector<napi_value> callbackArguments =
+        {
+          env.Null(),
+          outer
         };
 
         Callback().Call(callbackArguments);
@@ -3988,6 +4048,175 @@ fetch_all_and_store
   }
  
   return return_code;
+}
+
+static void
+statement_data_detach_current_result_set
+(
+  StatementData *data
+)
+{
+  ResultSetSnapshot snap;
+  snap.columns = data->columns;
+  snap.column_count = data->column_count;
+  snap.rowCount = data->rowCount;
+  snap.storedRows = std::move(data->storedRows);
+
+  if (data->column_count > 0 && data->bound_columns != NULL)
+  {
+    for (int i = 0; i < data->column_count; i++)
+    {
+      switch (data->columns[i]->bind_type)
+      {
+        case SQL_C_CHAR:
+        case SQL_C_UTINYINT:
+        case SQL_C_BINARY:
+          delete[] (SQLCHAR *)data->bound_columns[i].buffer;
+          break;
+        case SQL_C_WCHAR:
+          delete[] (SQLWCHAR *)data->bound_columns[i].buffer;
+          break;
+        case SQL_C_DOUBLE:
+          delete[] (SQLDOUBLE *)data->bound_columns[i].buffer;
+          break;
+        case SQL_C_USHORT:
+          delete[] (SQLUSMALLINT *)data->bound_columns[i].buffer;
+          break;
+        case SQL_C_SLONG:
+          delete[] (SQLUINTEGER *)data->bound_columns[i].buffer;
+          break;
+        case SQL_C_UBIGINT:
+          delete[] (SQLUBIGINT *)data->bound_columns[i].buffer;
+          break;
+      }
+
+      delete[] data->bound_columns[i].length_or_indicator_array;
+    }
+    delete[] data->bound_columns;
+  }
+  else
+  {
+    delete[] data->bound_columns;
+  }
+
+  delete[] data->row_status_array;
+
+  data->columns = NULL;
+  data->bound_columns = NULL;
+  data->row_status_array = NULL;
+  data->column_count = 0;
+  data->result_set_end_reached = false;
+
+  data->result_set_snapshots.push_back(std::move(snap));
+}
+
+void
+clear_pending_result_set_snapshots
+(
+  StatementData *data
+)
+{
+  for (size_t r = 0; r < data->result_set_snapshots.size(); r++)
+  {
+    ResultSetSnapshot *snap = &data->result_set_snapshots[r];
+    for (size_t h = 0; h < snap->storedRows.size(); h++)
+    {
+      delete[] snap->storedRows[h];
+    }
+    snap->storedRows.clear();
+    if (snap->columns != NULL)
+    {
+      for (int i = 0; i < snap->column_count; i++)
+      {
+        delete[] snap->columns[i]->ColumnName;
+        delete snap->columns[i];
+      }
+      delete[] snap->columns;
+      snap->columns = NULL;
+      snap->column_count = 0;
+    }
+  }
+  data->result_set_snapshots.clear();
+}
+
+void
+free_unbound_columns
+(
+  StatementData *data
+)
+{
+  if (data->columns == NULL)
+  {
+    return;
+  }
+  for (int i = 0; i < data->column_count; i++)
+  {
+    delete[] data->columns[i]->ColumnName;
+    delete data->columns[i];
+  }
+  delete[] data->columns;
+  data->columns = NULL;
+  data->column_count = 0;
+}
+
+SQLRETURN
+fetch_multiple_result_sets
+(
+  StatementData *data,
+  bool          set_position,
+  bool         *alloc_error
+)
+{
+  clear_pending_result_set_snapshots(data);
+
+  SQLRETURN return_code;
+
+  while (true)
+  {
+    return_code =
+    fetch_all_and_store
+    (
+      data,
+      set_position,
+      alloc_error
+    );
+    if (*alloc_error)
+    {
+      return return_code;
+    }
+    if (!SQL_SUCCEEDED(return_code) && return_code != SQL_NO_DATA)
+    {
+      return return_code;
+    }
+
+    statement_data_detach_current_result_set(data);
+
+    return_code =
+    SQLMoreResults
+    (
+      data->hstmt
+    );
+    if (return_code == SQL_NO_DATA)
+    {
+      return SQL_SUCCESS;
+    }
+    if (!SQL_SUCCEEDED(return_code))
+    {
+      clear_pending_result_set_snapshots(data);
+      return return_code;
+    }
+
+    return_code =
+    prepare_for_fetch
+    (
+      data
+    );
+    if (!SQL_SUCCEEDED(return_code))
+    {
+      clear_pending_result_set_snapshots(data);
+      return return_code;
+    }
+  }
 }
 
 // This macro and function are used to translate the various ODBC data type

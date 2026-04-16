@@ -173,6 +173,9 @@ typedef struct QueryOptions {
   static constexpr const char *FETCH_SIZE_PROPERTY          = "fetchSize";
   static constexpr const char *TIMEOUT_PROPERTY             = "timeout";
   static constexpr const char *INITIAL_BUFFER_SIZE_PROPERTY = "initialBufferSize";
+  static constexpr const char *MULTIPLE_RESULT_SETS_PROPERTY = "multipleResultSets";
+
+  bool         multiple_result_sets          = false;
 
   void reset() {
     this->use_cursor   = false;
@@ -181,9 +184,18 @@ typedef struct QueryOptions {
     this->fetch_size = 1;
     this->timeout = 0;
     this->initial_long_data_buffer_size = MB_SIZE;
+    this->multiple_result_sets = false;
   };
 
 } QueryOptions;
+
+// One result set detached from a statement while advancing with SQLMoreResults
+typedef struct ResultSetSnapshot {
+  Column                    **columns        = NULL;
+  SQLSMALLINT                 column_count   = 0;
+  SQLLEN                      rowCount       = 0;
+  std::vector<ColumnData*>    storedRows;
+} ResultSetSnapshot;
 
 // StatementData
 typedef struct StatementData {
@@ -217,6 +229,9 @@ typedef struct StatementData {
 
   bool                        fetch_array   = false;
 
+  // When query_options.multiple_result_sets: each finished result set after fetch
+  std::vector<ResultSetSnapshot> result_set_snapshots;
+
   // query options
   SQLTCHAR *sql       = NULL;
   SQLTCHAR *catalog   = NULL;
@@ -230,6 +245,24 @@ typedef struct StatementData {
   SQLTCHAR *procedure = NULL;
 
   ~StatementData() {
+    for (size_t r = 0; r < this->result_set_snapshots.size(); r++) {
+      ResultSetSnapshot *snap = &this->result_set_snapshots[r];
+      for (size_t h = 0; h < snap->storedRows.size(); h++) {
+        delete[] snap->storedRows[h];
+      }
+      snap->storedRows.clear();
+      if (snap->columns != NULL) {
+        for (int i = 0; i < snap->column_count; i++) {
+          delete[] snap->columns[i]->ColumnName;
+          delete snap->columns[i];
+        }
+        delete[] snap->columns;
+        snap->columns = NULL;
+        snap->column_count = 0;
+      }
+    }
+    this->result_set_snapshots.clear();
+
     deleteColumns();
 
     for (int i = 0; i < this->parameterCount; i++) {

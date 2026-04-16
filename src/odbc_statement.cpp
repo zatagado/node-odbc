@@ -414,13 +414,26 @@ class ExecuteAsyncWorker : public ODBCAsyncWorker {
         if (!data->query_options.use_cursor)
         {
           bool alloc_error = false;
-          return_code =
-          fetch_all_and_store
-          (
-            data,
-            true,
-            &alloc_error
-          );
+          if (data->query_options.multiple_result_sets)
+          {
+            return_code =
+            fetch_multiple_result_sets
+            (
+              data,
+              true,
+              &alloc_error
+            );
+          }
+          else
+          {
+            return_code =
+            fetch_all_and_store
+            (
+              data,
+              true,
+              &alloc_error
+            );
+          }
           if (alloc_error)
           {
             SetError("[odbc] Error allocating or reallocating memory when fetching data. No ODBC error information available.\0");
@@ -462,6 +475,31 @@ class ExecuteAsyncWorker : public ODBCAsyncWorker {
           env.Null(),
           cursorObject
         };
+
+        Callback().Call(callbackArguments);
+      }
+      else if (data->query_options.multiple_result_sets)
+      {
+        Napi::Array outer = Napi::Array::New(env);
+
+        for (size_t i = 0; i < data->result_set_snapshots.size(); i++)
+        {
+          ResultSetSnapshot snap = std::move(data->result_set_snapshots[i]);
+          data->columns = snap.columns;
+          data->column_count = snap.column_count;
+          data->rowCount = snap.rowCount;
+          data->storedRows = std::move(snap.storedRows);
+
+          Napi::Array inner = process_data_for_napi(env, data, odbcStatement->napiParameters.Value());
+
+          outer.Set(i, inner);
+          free_unbound_columns(data);
+        }
+        data->result_set_snapshots.clear();
+
+        std::vector<napi_value> callbackArguments;
+        callbackArguments.push_back(env.Null());
+        callbackArguments.push_back(outer);
 
         Callback().Call(callbackArguments);
       }

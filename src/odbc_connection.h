@@ -109,6 +109,9 @@ SQLRETURN bind_buffers(StatementData *data);
 SQLRETURN prepare_for_fetch(StatementData *data);
 SQLRETURN fetch_and_store(StatementData *data, bool set_position, bool *alloc_error);
 SQLRETURN fetch_all_and_store(StatementData *data, bool set_position, bool *alloc_error);
+SQLRETURN fetch_multiple_result_sets(StatementData *data, bool set_position, bool *alloc_error);
+void free_unbound_columns(StatementData *data);
+void clear_pending_result_set_snapshots(StatementData *data);
 SQLRETURN set_fetch_size(StatementData *data, SQLULEN fetch_size);
 Napi::Value parse_query_options(Napi::Env env, Napi::Value options_value, QueryOptions *query_options);
 #endif

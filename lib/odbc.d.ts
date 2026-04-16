@@ -38,6 +38,7 @@ declare namespace odbc {
     bind(parameters: Array<number|string>, callback: (error: NodeOdbcError) => undefined): undefined;
 
     execute<T>(callback: (error: NodeOdbcError, result: Result<T>) => undefined): undefined;
+    execute<T, O extends QueryOptions>(options: O | null | undefined, callback: (error: NodeOdbcError, result: O extends MultipleResultSetsQueryOptions ? Array<Result<T>> : Result<T>) => undefined): undefined;
 
     close(callback: (error: NodeOdbcError) => undefined): undefined;
 
@@ -50,6 +51,7 @@ declare namespace odbc {
     bind(parameters: Array<number|string>): Promise<void>;
 
     execute<T>(): Promise<Result<T>>;
+    execute<T, O extends QueryOptions>(options?: O | null): Promise<O extends MultipleResultSetsQueryOptions ? Array<Result<T>> : Result<T>>;
 
     close(): Promise<void>;
   }
@@ -75,10 +77,16 @@ declare namespace odbc {
     fetchSize?: number;
     timeout?: number;
     initialBufferSize?: number;
+    /** When true, returns an array of result sets (each has the usual Result shape). Incompatible with cursor/fetchSize. */
+    multipleResultSets?: boolean;
   }
 
   interface CursorQueryOptions extends QueryOptions {
     cursor: boolean|string
+  }
+
+  interface MultipleResultSetsQueryOptions extends QueryOptions {
+    multipleResultSets: true;
   }
 
   interface Connection {
@@ -88,8 +96,8 @@ declare namespace odbc {
     ////////////////////////////////////////////////////////////////////////////
     query<T>(sql: string, callback: (error: NodeOdbcError, result: Result<T>) => undefined): undefined;
     query<T>(sql: string, parameters: Array<number|string>, callback: (error: NodeOdbcError, result: Result<T> | Cursor) => undefined): undefined;
-    query<T, O extends QueryOptions>(sql: string, options: O, callback: (error: NodeOdbcError, result: O extends CursorQueryOptions ? Cursor : Result<T>) => undefined): undefined;
-    query<T, O extends QueryOptions>(sql: string, parameters: Array<number|string>, options: O, callback: (error: NodeOdbcError, result: O extends CursorQueryOptions ? Cursor : Result<T>) => undefined): undefined;
+    query<T, O extends QueryOptions>(sql: string, options: O, callback: (error: NodeOdbcError, result: O extends CursorQueryOptions ? Cursor : O extends MultipleResultSetsQueryOptions ? Array<Result<T>> : Result<T>) => undefined): undefined;
+    query<T, O extends QueryOptions>(sql: string, parameters: Array<number|string>, options: O, callback: (error: NodeOdbcError, result: O extends CursorQueryOptions ? Cursor : O extends MultipleResultSetsQueryOptions ? Array<Result<T>> : Result<T>) => undefined): undefined;
 
     callProcedure<T>(catalog: string|null, schema: string|null, name: string, callback: (error: NodeOdbcError, result: Result<T>) => undefined): undefined;
     callProcedure<T>(catalog: string|null, schema: string|null, name: string, parameters: Array<number|string>, callback: (error: NodeOdbcError, result: Result<T>) => undefined): undefined;
@@ -119,8 +127,8 @@ declare namespace odbc {
     ////////////////////////////////////////////////////////////////////////////
     query<T>(sql: string): Promise<Result<T>>;
     query<T>(sql: string, parameters: Array<number|string>): Promise<Result<T>>;
-    query<T, O extends QueryOptions>(sql: string, options: O): O extends CursorQueryOptions ? Promise<Cursor> : Promise<Result<T>>;
-    query<T, O extends QueryOptions>(sql: string, parameters: Array<number|string>, options: O): O extends CursorQueryOptions ? Promise<Cursor> : Promise<Result<T>>;
+    query<T, O extends QueryOptions>(sql: string, options: O): O extends CursorQueryOptions ? Promise<Cursor> : O extends MultipleResultSetsQueryOptions ? Promise<Array<Result<T>>> : Promise<Result<T>>;
+    query<T, O extends QueryOptions>(sql: string, parameters: Array<number|string>, options: O): O extends CursorQueryOptions ? Promise<Cursor> : O extends MultipleResultSetsQueryOptions ? Promise<Array<Result<T>>> : Promise<Result<T>>;
 
     callProcedure<T>(catalog: string|null, schema: string|null, name: string, parameters?: Array<number|string>): Promise<Result<T>>;
 
@@ -158,8 +166,8 @@ declare namespace odbc {
 
     query<T>(sql: string, callback: (error: NodeOdbcError, result: Result<T>) => undefined): undefined;
     query<T>(sql: string, parameters: Array<number|string>, callback: (error: NodeOdbcError, result: Result<T> | Cursor) => undefined): undefined;
-    query<T, O extends QueryOptions>(sql: string, options: O, callback: (error: NodeOdbcError, result: O extends CursorQueryOptions ? Cursor : Result<T>) => undefined): undefined;
-    query<T, O extends QueryOptions>(sql: string, parameters: Array<number|string>, options: O, callback: (error: NodeOdbcError, result: O extends CursorQueryOptions ? Cursor : Result<T>) => undefined): undefined;
+    query<T, O extends QueryOptions>(sql: string, options: O, callback: (error: NodeOdbcError, result: O extends CursorQueryOptions ? Cursor : O extends MultipleResultSetsQueryOptions ? Array<Result<T>> : Result<T>) => undefined): undefined;
+    query<T, O extends QueryOptions>(sql: string, parameters: Array<number|string>, options: O, callback: (error: NodeOdbcError, result: O extends CursorQueryOptions ? Cursor : O extends MultipleResultSetsQueryOptions ? Array<Result<T>> : Result<T>) => undefined): undefined;
 
     close(callback: (error: NodeOdbcError) => undefined): undefined;
 
@@ -171,8 +179,8 @@ declare namespace odbc {
 
     query<T>(sql: string): Promise<Result<T>>;
     query<T>(sql: string, parameters: Array<number|string>): Promise<Result<T>>;
-    query<T, O extends QueryOptions>(sql: string, options: O): O extends CursorQueryOptions ? Promise<Cursor> : Promise<Result<T>>;
-    query<T, O extends QueryOptions>(sql: string, parameters: Array<number|string>, options: O): O extends CursorQueryOptions ? Promise<Cursor> : Promise<Result<T>>;
+    query<T, O extends QueryOptions>(sql: string, options: O): O extends CursorQueryOptions ? Promise<Cursor> : O extends MultipleResultSetsQueryOptions ? Promise<Array<Result<T>>> : Promise<Result<T>>;
+    query<T, O extends QueryOptions>(sql: string, parameters: Array<number|string>, options: O): O extends CursorQueryOptions ? Promise<Cursor> : O extends MultipleResultSetsQueryOptions ? Promise<Array<Result<T>>> : Promise<Result<T>>;
 
     close(): Promise<void>;
   }
