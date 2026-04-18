@@ -21,6 +21,9 @@
 #include "odbc_statement.h"
 #include "odbc_cursor.h"
 
+#include <cstring>
+#include <vector>
+
 #define MAX_UTF8_BYTES 4
 
 // object keys for the result object
@@ -556,6 +559,21 @@ parse_query_options
   }
   // END .initialBufferSize
 
+  // .multipleResultSets property
+  if (options_object.HasOwnProperty(QueryOptions::MULTIPLE_RESULT_SETS_PROPERTY))
+  {
+    Napi::Value multiple_result_sets_value =
+      options_object.Get(QueryOptions::MULTIPLE_RESULT_SETS_PROPERTY);
+
+    if (!multiple_result_sets_value.IsBoolean())
+    {
+      return Napi::TypeError::New(env, std::string("Connection.query options: .") + QueryOptions::MULTIPLE_RESULT_SETS_PROPERTY + " must be a BOOLEAN value.").Value();
+    }
+
+    query_options->multiple_result_sets = multiple_result_sets_value.As<Napi::Boolean>().Value();
+  }
+  // END .multipleResultSets
+
   return env.Null();
 }
 
@@ -696,6 +714,7 @@ set_fetch_size
     }
   }
 
+  delete[] data->row_status_array;
   data->row_status_array =
     new SQLUSMALLINT[fetch_size]();
 
@@ -716,9 +735,11 @@ class QueryAsyncWorker : public ODBCAsyncWorker {
 
   private:
 
-    ODBCConnection               *odbcConnectionObject;
-    Napi::Reference<Napi::Array>  napiParameters;
-    StatementData                *data;
+    ODBCConnection                *odbcConnectionObject;
+    Napi::Reference<Napi::Array>   napiParameters;
+    StatementData                 *data;
+    std::vector<StatementData *>   statementDataList;
+    bool                           queryHasMultipleResultSets = false;
 
     void Execute() {
 
@@ -874,54 +895,132 @@ class QueryAsyncWorker : public ODBCAsyncWorker {
             }
           }
 
-          return_code =
-          set_fetch_size
-          (
-            data,
-            data->query_options.fetch_size
-          );
-
-          // set_fetch_size will swallow errors in the case that the driver
-          // doesn't implement SQL_ATTR_ROW_ARRAY_SIZE for SQLSetStmtAttr and
-          // the fetch size was 1. If the fetch size was set by the user to a
-          // value greater than 1, throw an error.
-          if (!SQL_SUCCEEDED(return_code)) {
-            this->errors = GetODBCErrors(SQL_HANDLE_STMT, data->hstmt);
-            SetError("[odbc] Error setting the fetch size on the statement\0");
-            return;
-          }
-
-          return_code =
-          prepare_for_fetch
-          (
-            data
-          );
-          if (!SQL_SUCCEEDED(return_code)) {
-            this->errors = GetODBCErrors(SQL_HANDLE_STMT, data->hstmt);
-            SetError("[odbc] Error preparing for fetch\0");
-            return;
-          }
-
-
-          if (!data->query_options.use_cursor)
+          if (data->query_options.multiple_result_sets && !data->query_options.use_cursor)
           {
-            bool alloc_error = false;
+            while (true) {
+              return_code =
+              set_fetch_size
+              (
+                data,
+                data->query_options.fetch_size
+              );
+
+              if (!SQL_SUCCEEDED(return_code)) {
+                this->errors = GetODBCErrors(SQL_HANDLE_STMT, data->hstmt);
+                SetError("[odbc] Error setting the fetch size on the statement\0");
+                return;
+              }
+
+              data->simple_binding = false;
+              data->result_set_end_reached = false;
+              return_code =
+              prepare_for_fetch
+              (
+                data
+              );
+
+              if (!SQL_SUCCEEDED(return_code)) {
+                this->errors = GetODBCErrors(SQL_HANDLE_STMT, data->hstmt);
+                SetError("[odbc] Error preparing for fetch\0");
+                return;
+              }
+
+              bool alloc_error = false;
+              return_code =
+              fetch_all_and_store
+              (
+                data,
+                true,
+                &alloc_error,
+                false
+              );
+
+              if (alloc_error)
+              {
+                SetError("[odbc] Error allocating or reallocating memory when fetching data. No ODBC error information available.\0");
+                return;
+              }
+
+              if (!SQL_SUCCEEDED(return_code)) {
+                this->errors = GetODBCErrors(SQL_HANDLE_STMT, data->hstmt);
+                SetError("[odbc] Error retrieving the result set from the statement\0");
+                return;
+              }
+
+              // Prevent empty result set returned by some drivers
+              if (data->column_count == 0) {
+                data->deleteColumns();
+              }
+              else {
+                StatementData *statementData = copy_result_set(data);
+                clear_column_metadata(data);
+                statementDataList.push_back(statementData);
+                queryHasMultipleResultSets = true;
+              }
+
+              return_code = SQLMoreResults(data->hstmt);
+              if (return_code == SQL_NO_DATA) {
+                break;
+              }
+
+              if (!SQL_SUCCEEDED(return_code)) {
+                this->errors = GetODBCErrors(SQL_HANDLE_STMT, data->hstmt);
+                SetError("[odbc] Error advancing to the next result set\0");
+                return;
+              }
+            }
+          }
+          else
+          {
             return_code =
-            fetch_all_and_store
+            set_fetch_size
             (
               data,
-              true,
-              &alloc_error
+              data->query_options.fetch_size
             );
-            if (alloc_error)
-            {
-              SetError("[odbc] Error allocating or reallocating memory when fetching data. No ODBC error information available.\0");
-              return;
-            }
+
+            // set_fetch_size will swallow errors in the case that the driver
+            // doesn't implement SQL_ATTR_ROW_ARRAY_SIZE for SQLSetStmtAttr and
+            // the fetch size was 1. If the fetch size was set by the user to a
+            // value greater than 1, throw an error.
             if (!SQL_SUCCEEDED(return_code)) {
               this->errors = GetODBCErrors(SQL_HANDLE_STMT, data->hstmt);
-              SetError("[odbc] Error retrieving the result set from the statement\0");
+              SetError("[odbc] Error setting the fetch size on the statement\0");
               return;
+            }
+
+            return_code =
+            prepare_for_fetch
+            (
+              data
+            );
+            if (!SQL_SUCCEEDED(return_code)) {
+              this->errors = GetODBCErrors(SQL_HANDLE_STMT, data->hstmt);
+              SetError("[odbc] Error preparing for fetch\0");
+              return;
+            }
+
+            if (!data->query_options.use_cursor)
+            {
+              bool alloc_error = false;
+              return_code =
+              fetch_all_and_store
+              (
+                data,
+                true,
+                &alloc_error,
+                true
+              );
+              if (alloc_error)
+              {
+                SetError("[odbc] Error allocating or reallocating memory when fetching data. No ODBC error information available.\0");
+                return;
+              }
+              if (!SQL_SUCCEEDED(return_code)) {
+                this->errors = GetODBCErrors(SQL_HANDLE_STMT, data->hstmt);
+                SetError("[odbc] Error retrieving the result set from the statement\0");
+                return;
+              }
             }
           }
         }
@@ -958,6 +1057,20 @@ class QueryAsyncWorker : public ODBCAsyncWorker {
 
         Callback().Call(callbackArguments);
       }
+      else if (queryHasMultipleResultSets)
+      {
+        Napi::Array resultSetsArray = Napi::Array::New(env);
+        for (size_t i = 0; i < statementDataList.size(); i++) {
+          Napi::Array rows = process_data_for_napi(env, statementDataList[i], napiParameters.Value());
+          resultSetsArray.Set((uint32_t)i, rows);
+          delete statementDataList[i];
+        }
+        statementDataList.clear();
+        Callback().Call({
+          env.Null(),
+          resultSetsArray
+        });
+      }
       else
       {
         Napi::Array rows = process_data_for_napi(env, data, napiParameters.Value());
@@ -992,6 +1105,10 @@ class QueryAsyncWorker : public ODBCAsyncWorker {
     }
 
     ~QueryAsyncWorker() {
+      for (StatementData *statementData : statementDataList) {
+        delete statementData;
+      }
+      statementDataList.clear();
       if (!data->query_options.use_cursor)
       {
         uv_mutex_lock(&ODBC::g_odbcMutex);
@@ -1137,6 +1254,14 @@ Napi::Value ODBCConnection::Query(const Napi::CallbackInfo& info) {
     std::vector<napi_value> callback_argument =
     {
       error
+    };
+    callback.Call(callback_argument);
+  }
+  else if (data->query_options.use_cursor && data->query_options.multiple_result_sets)
+  {
+    std::vector<napi_value> callback_argument =
+    {
+      Napi::TypeError::New(env, "Connection.query options: cursor (or fetchSize) cannot be used together with multipleResultSets.").Value()
     };
     callback.Call(callback_argument);
   }
@@ -3956,7 +4081,8 @@ fetch_all_and_store
 (
   StatementData            *data,
   bool                      set_position,
-  bool                     *alloc_error
+  bool                     *alloc_error,
+  bool                      close_cursor_when_done
 )
 {
   SQLRETURN return_code;
@@ -3978,7 +4104,7 @@ fetch_all_and_store
   }
 
   // will return either SQL_ERROR or SQL_NO_DATA
-  if (data->column_count > 0) {
+  if (data->column_count > 0 && close_cursor_when_done) {
     return_code = SQLCloseCursor(data->hstmt);
     if (!SQL_SUCCEEDED(return_code)) {
       return return_code;
@@ -3988,6 +4114,55 @@ fetch_all_and_store
   }
  
   return return_code;
+}
+
+static SQLTCHAR *
+duplicate_sql_tchar(const SQLTCHAR *sql)
+{
+  if (sql == NULL) {
+    return NULL;
+  }
+#ifndef UNICODE
+  size_t len = strlen((const char *)sql) + 1;
+  SQLTCHAR *out = new SQLTCHAR[len];
+  memcpy(out, sql, len);
+  return out;
+#else
+  size_t len = wcslen((const wchar_t *)sql) + 1;
+  SQLTCHAR *out = new SQLTCHAR[len];
+  memcpy(out, sql, len * sizeof(SQLTCHAR));
+  return out;
+#endif
+}
+
+void
+clear_column_metadata(StatementData *data)
+{
+  data->columns = NULL;
+  data->column_count = 0;
+  data->bound_columns = NULL;
+  data->row_status_array = NULL;
+}
+
+StatementData *
+copy_result_set(StatementData *data)
+{
+  StatementData *statementData = new StatementData();
+  statementData->henv = data->henv;
+  statementData->hdbc = data->hdbc;
+  statementData->hstmt = SQL_NULL_HANDLE;
+  statementData->fetch_array = data->fetch_array;
+  statementData->maxColumnNameLength = data->maxColumnNameLength;
+  statementData->get_data_supports = data->get_data_supports;
+  statementData->columns = data->columns;
+  statementData->column_count = data->column_count;
+  statementData->bound_columns = data->bound_columns;
+  statementData->storedRows = std::move(data->storedRows);
+  statementData->rowCount = data->rowCount;
+  statementData->row_status_array = data->row_status_array;
+  statementData->sql = duplicate_sql_tchar(data->sql);
+
+  return statementData;
 }
 
 // This macro and function are used to translate the various ODBC data type
