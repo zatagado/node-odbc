@@ -261,6 +261,7 @@ Run a query on the database. Can be passed an SQL string with parameter markers 
     * `fetchSize`: Used with a cursor, sets the number of rows that are returned on a call to `fetch` on the Cursor.
     * `timeout`: The amount of time (in seconds) that the query will attempt to execute before returning to the application.
     * `initialBufferSize`: Sets the initial buffer size (in bytes) for storing data from SQL_LONG* data fields. Useful for avoiding resizes if buffer size is known before the call.
+    * `multipleResultSets`: A boolean value indicating whether or not multiple result sets can be returned, should the database driver support it.
 * **callback?**: The function called when `.query` has finished execution. If no callback function is given, `.query` will return a native JavaScript `Promise`. Callback signature is:
     * error: The error that occured in execution, or `null` if no error
     * result: The result object from execution
@@ -771,7 +772,7 @@ odbc.pool(`${process.env.CONNECTION_STRING}`, (error1, pool) => {
 
 ---
 
-### `.query(sql, parameters?, callback?)`
+### `.query(sql, parameters?, options?, callback?)`
 
 Utility function to execute a query on any open connection in the pool. Will get a connection, fire off the query, return the results, and return the connection the the pool.
 
@@ -783,6 +784,7 @@ Utility function to execute a query on any open connection in the pool. Will get
     * `fetchSize`: Used with a cursor, sets the number of rows that are returned on a call to `fetch` on the Cursor.
     * `timeout`: The amount of time (in seconds) that the query will attempt to execute before returning to the application.
     * `initialBufferSize`: Sets the initial buffer size (in bytes) for storing data from SQL_LONG* data fields. Useful for avoiding resizes if buffer size is known before the call.
+    * `multipleResultSets`: A boolean value indicating whether or not multiple result sets can be returned, should the database driver support it.
 * **callback?**: The function called when `.query` has finished execution. If no callback function is given, `.query` will return a native JavaScript `Promise`. Callback signature is:
     * error: The error that occured in execution, or `null` if no error
     * result: The [result array](#result-array) returned from the executed statement
