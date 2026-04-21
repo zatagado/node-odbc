@@ -947,16 +947,10 @@ class QueryAsyncWorker : public ODBCAsyncWorker {
                 return;
               }
 
-              // Prevent empty result set returned by some drivers
-              if (data->column_count == 0) {
-                data->deleteColumns();
-              }
-              else {
-                StatementData *statementData = copy_result_set(data);
-                clear_column_metadata(data);
-                statementDataList.push_back(statementData);
-                queryHasMultipleResultSets = true;
-              }
+              StatementData *statementData = copy_result_set(data);
+              clear_column_metadata(data);
+              statementDataList.push_back(statementData);
+              queryHasMultipleResultSets = true;
 
               return_code = SQLMoreResults(data->hstmt);
               if (return_code == SQL_NO_DATA) {
