@@ -15,6 +15,7 @@ declare namespace odbc {
     statement: string;
     parameters: Array<number|string>;
     return: number;
+    truncated?: boolean;
   }
 
   interface OdbcError {
@@ -58,11 +59,13 @@ declare namespace odbc {
     connectionString: string;
     connectionTimeout?: number;
     loginTimeout?: number;
+    fetchArray?: boolean;
   }
   interface PoolParameters {
     connectionString: string;
     connectionTimeout?: number;
     loginTimeout?: number;
+    fetchArray?: boolean;
     initialSize?: number;
     incrementSize?: number;
     maxSize?: number;
@@ -73,6 +76,7 @@ declare namespace odbc {
   interface QueryOptions {
     cursor?: boolean|string;
     fetchSize?: number;
+    maxRows?: number;
     timeout?: number;
     initialBufferSize?: number;
     multipleResultSets?: boolean;

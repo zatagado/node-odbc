@@ -165,6 +165,7 @@ typedef struct QueryOptions {
   SQLTCHAR    *cursor_name                   = nullptr;
   SQLSMALLINT  cursor_name_length            = 0;
   SQLULEN      fetch_size                    = 1;
+  SQLULEN      max_rows                      = 0;
   SQLULEN      timeout                       = 0;
   SQLLEN       initial_long_data_buffer_size = MB_SIZE;
   bool         multiple_result_sets          = false;
@@ -172,6 +173,7 @@ typedef struct QueryOptions {
   // JavaScript property keys for query options
   static constexpr const char *CURSOR_PROPERTY              = "cursor";
   static constexpr const char *FETCH_SIZE_PROPERTY          = "fetchSize";
+  static constexpr const char *MAX_ROWS_PROPERTY            = "maxRows";
   static constexpr const char *TIMEOUT_PROPERTY             = "timeout";
   static constexpr const char *INITIAL_BUFFER_SIZE_PROPERTY = "initialBufferSize";
   static constexpr const char *MULTIPLE_RESULT_SETS_PROPERTY = "multipleResultSets";
@@ -181,6 +183,7 @@ typedef struct QueryOptions {
     this->cursor_name = nullptr;
     this->cursor_name_length = 0;
     this->fetch_size = 1;
+    this->max_rows = 0;
     this->timeout = 0;
     this->initial_long_data_buffer_size = MB_SIZE;
     this->multiple_result_sets = false;
@@ -217,6 +220,7 @@ typedef struct StatementData {
   SQLUINTEGER                 fetch_size;
   SQLULEN                     rows_fetched;
   bool                        result_set_end_reached = false;
+  bool                        rows_truncated = false;
 
   bool                        fetch_array   = false;
 
