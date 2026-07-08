@@ -112,5 +112,6 @@ SQLRETURN fetch_all_and_store(StatementData *data, bool set_position, bool *allo
 StatementData *copy_result_set(StatementData *data);
 void clear_column_metadata(StatementData *data);
 SQLRETURN set_fetch_size(StatementData *data, SQLULEN fetch_size);
+SQLRETURN set_max_rows(StatementData *data, SQLULEN max_rows);
 Napi::Value parse_query_options(Napi::Env env, Napi::Value options_value, QueryOptions *query_options);
 #endif

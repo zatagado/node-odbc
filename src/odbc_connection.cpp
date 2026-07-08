@@ -38,6 +38,7 @@ const char* PARAMETERS     = "parameters";
 const char* RETURN         = "return";
 const char* COUNT          = "count";
 const char* COLUMNS        = "columns";
+const char* TRUNCATED      = "truncated";
 
 Napi::FunctionReference ODBCConnection::constructor;
 
@@ -515,6 +516,28 @@ parse_query_options
   }
   // END .fetchSize property
 
+  // .maxRows property
+  if (options_object.HasOwnProperty(QueryOptions::MAX_ROWS_PROPERTY))
+  {
+    Napi::Value max_rows_value =
+      options_object.Get(QueryOptions::MAX_ROWS_PROPERTY);
+
+    if (!max_rows_value.IsNumber())
+    {
+      return Napi::TypeError::New(env, std::string("Connection.query options: .") + QueryOptions::MAX_ROWS_PROPERTY + " must be a NUMBER value.").Value();
+    }
+
+    int64_t temp_value = max_rows_value.As<Napi::Number>().Int64Value();
+
+    if (temp_value < 1)
+    {
+      return Napi::RangeError::New(env, std::string("Connection.query options: .") + QueryOptions::MAX_ROWS_PROPERTY + " must be greater than 0.").Value();
+    }
+
+    query_options->max_rows = (SQLULEN) temp_value;
+  }
+  // END .maxRows property
+
   // .timeout property
   if (options_object.HasOwnProperty(QueryOptions::TIMEOUT_PROPERTY))
   {
@@ -730,6 +753,67 @@ set_fetch_size
   return return_code;
 }
 
+SQLRETURN
+set_max_rows
+(
+  StatementData *data,
+  SQLULEN        max_rows
+)
+{
+  if (max_rows == 0)
+  {
+    return SQL_SUCCESS;
+  }
+
+  SQLRETURN return_code =
+  SQLSetStmtAttr
+  (
+    data->hstmt,
+    SQL_ATTR_MAX_ROWS,
+    (SQLPOINTER) max_rows,
+    0
+  );
+
+  if (!SQL_SUCCEEDED(return_code))
+  {
+    // Some drivers do not implement SQL_ATTR_MAX_ROWS. Rely on the
+    // application-level row limit in fetch_all_and_store instead of failing.
+    SQLRETURN   diagnostic_return_code;
+    SQLSMALLINT textLength;
+    SQLTCHAR    errorSQLState[SQL_SQLSTATE_SIZE + 1];
+    SQLINTEGER  nativeError;
+    SQLTCHAR    errorMessage[ERROR_MESSAGE_BUFFER_BYTES];
+
+    diagnostic_return_code =
+    SQLGetDiagRec
+    (
+      SQL_HANDLE_STMT,
+      data->hstmt,
+      1,
+      errorSQLState,
+      &nativeError,
+      errorMessage,
+      ERROR_MESSAGE_BUFFER_CHARS,
+      &textLength
+    );
+
+    if (!SQL_SUCCEEDED(diagnostic_return_code))
+    {
+      return return_code;
+    }
+
+    if (strcmp("HY092", (const char*)errorSQLState) != 0 &&
+        strcmp("HYC00", (const char*)errorSQLState) != 0)
+    {
+      return return_code;
+    }
+
+    return_code = SQL_SUCCESS;
+  }
+
+  return return_code;
+}
+
 // QueryAsyncWorker, used by Query function (see below)
 class QueryAsyncWorker : public ODBCAsyncWorker {
 
@@ -797,6 +881,21 @@ class QueryAsyncWorker : public ODBCAsyncWorker {
           if (!SQL_SUCCEEDED(return_code)) {
             this->errors = GetODBCErrors(SQL_HANDLE_STMT, data->hstmt);
             SetError("[odbc] Error setting the query timeout on the statement\0");
+            return;
+          }
+        }
+
+        if (data->query_options.max_rows > 0) {
+          return_code =
+          set_max_rows
+          (
+            data,
+            data->query_options.max_rows
+          );
+
+          if (!SQL_SUCCEEDED(return_code)) {
+            this->errors = GetODBCErrors(SQL_HANDLE_STMT, data->hstmt);
+            SetError("[odbc] Error setting the max rows on the statement\0");
             return;
           }
         }
@@ -3644,6 +3743,13 @@ fetch_and_store
   // cursor. Check here so that SQLFetch is only run if there is an actual
   // result set.
   if (data->column_count > 0) {
+    if (data->query_options.max_rows > 0 && data->storedRows.size() >= data->query_options.max_rows)
+    {
+      data->rows_truncated = true;
+      data->result_set_end_reached = true;
+      return SQL_NO_DATA;
+    }
+
     return_code =
     SQLFetch
     (
@@ -3655,6 +3761,13 @@ fetch_and_store
       // iterate through all of the rows fetched (but not the fetch size)
       for (size_t row_index = 0; row_index < data->rows_fetched; row_index++)
       {
+        if (data->query_options.max_rows > 0 && data->storedRows.size() >= data->query_options.max_rows)
+        {
+          data->rows_truncated = true;
+          data->result_set_end_reached = true;
+          return SQL_NO_DATA;
+        }
+
         if (set_position && data->get_data_supports.block && data->fetch_size > 1)
         {
           // In case the result set contains columns that contain LONG data
@@ -4079,9 +4192,15 @@ fetch_all_and_store
   bool                      close_cursor_when_done
 )
 {
-  SQLRETURN return_code;
+  SQLRETURN return_code = SQL_NO_DATA;
 
   do {
+    if (data->query_options.max_rows > 0 && data->storedRows.size() >= data->query_options.max_rows)
+    {
+      data->rows_truncated = true;
+      break;
+    }
+
     return_code = fetch_and_store(data, set_position, alloc_error);
   } while (SQL_SUCCEEDED(return_code));
 
@@ -4092,8 +4211,17 @@ fetch_all_and_store
     return return_code;
   }
 
+  if (data->rows_truncated)
+  {
+    if (data->column_count > 0) {
+      // Some drivers reject closing a partially read cursor; rows are already stored.
+      SQLCloseCursor(data->hstmt);
+    }
+    return SQL_SUCCESS;
+  }
+
   // If SQL_SUCCEEDED failed and return code isn't SQL_NO_DATA, there is an error
-  if(return_code != SQL_NO_DATA) {
+  if(!SQL_SUCCEEDED(return_code) && return_code != SQL_NO_DATA) {
     return return_code;
   }
 
@@ -4151,10 +4279,14 @@ copy_result_set(StatementData *data)
   statementData->columns = data->columns;
   statementData->column_count = data->column_count;
   statementData->bound_columns = data->bound_columns;
+  statementData->query_options = data->query_options;
   statementData->storedRows = std::move(data->storedRows);
   statementData->rowCount = data->rowCount;
+  statementData->rows_truncated = data->rows_truncated;
   statementData->row_status_array = data->row_status_array;
   statementData->sql = duplicate_sql_tchar(data->sql);
+
+  data->rows_truncated = false;
 
   return statementData;
 }
@@ -4270,7 +4402,8 @@ Napi::Array process_data_for_napi(Napi::Env env, StatementData *data, Napi::Arra
   rows.Set(Napi::String::New(env, RETURN), env.Undefined()); // TODO: This doesn't exist on my DBMS of choice, need to test on MSSQL Server or similar
 
   // set the 'count' property
-  rows.Set(Napi::String::New(env, COUNT), Napi::Number::New(env, (double)data->rowCount));
+  SQLLEN resultCount = data->column_count > 0 ? (SQLLEN) data->storedRows.size() : data->rowCount;
+  rows.Set(Napi::String::New(env, COUNT), Napi::Number::New(env, (double)resultCount));
 
   // construct the array for the 'columns' property and then set
   Napi::Array napiColumns = Napi::Array::New(env);
@@ -4290,6 +4423,16 @@ Napi::Array process_data_for_napi(Napi::Env env, StatementData *data, Napi::Arra
     napiColumns.Set(h, column);
   }
   rows.Set(Napi::String::New(env, COLUMNS), napiColumns);
+
+  bool truncated = data->rows_truncated;
+  if (
+    !truncated &&
+    data->query_options.max_rows > 0 &&
+    data->storedRows.size() >= data->query_options.max_rows
+  ) {
+    truncated = true;
+  }
+  rows.Set(Napi::String::New(env, TRUNCATED), Napi::Boolean::New(env, truncated));
 
   // iterate over all of the stored rows,
   for (size_t i = 0; i < data->storedRows.size(); i++) {
@@ -4398,7 +4541,6 @@ Napi::Array process_data_for_napi(Napi::Env env, StatementData *data, Napi::Arra
             break;
         }
       }
-      // TODO: here
       if (data->fetch_array == true) {
         row.Set(j, value);
       } else {

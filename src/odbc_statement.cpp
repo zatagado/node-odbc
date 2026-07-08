@@ -344,6 +344,21 @@ class ExecuteAsyncWorker : public ODBCAsyncWorker {
         }
       }
 
+      if (data->query_options.max_rows > 0) {
+        return_code =
+        set_max_rows
+        (
+          data,
+          data->query_options.max_rows
+        );
+
+        if (!SQL_SUCCEEDED(return_code)) {
+          this->errors = GetODBCErrors(SQL_HANDLE_STMT, data->hstmt);
+          SetError("[odbc] Error setting the max rows on the statement\0");
+          return;
+        }
+      }
+
       return_code =
       set_fetch_size
       (

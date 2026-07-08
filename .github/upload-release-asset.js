@@ -28,7 +28,7 @@ const options = {
 };
 
 (async function script() {
-    const tag_url = `https://api.github.com/repos/IBM/node-odbc/releases/tags/${tag}`;
+    const tag_url = `https://api.github.com/repos/zatagado/node-odbc/releases/tags/${tag}`;
     const response = await fetch(tag_url);
 
     if (!response.ok) {

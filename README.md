@@ -147,6 +147,7 @@ The result array also contains several properties:
 * `statement`: The statement used to return the result set
 * `parameters`: The parameters passed to the statement or procedure. For input/output and output parameters, this value will reflect the value updated from a procedure.
 * `return`: The return value from some procedures. For many DBMS, this will always be undefined.
+* `truncated`: When a query is executed with a `maxRows` option and more rows were available than returned, this property is `true`. Otherwise it is omitted or `false`.
 
 ```
 [ { CUSNUM: 938472,
@@ -259,6 +260,7 @@ Run a query on the database. Can be passed an SQL string with parameter markers 
 * **options?**: An object containing query options that affect query behavior. Valid properties include:
     * `cursor`: A boolean value indicating whether or not to return a cursor instead of results immediately. Can also be a string naming the cursor, which will assume that a cursor will be returned.
     * `fetchSize`: Used with a cursor, sets the number of rows that are returned on a call to `fetch` on the Cursor.
+    * `maxRows`: Limits the maximum number of rows returned from a query.
     * `timeout`: The amount of time (in seconds) that the query will attempt to execute before returning to the application.
     * `initialBufferSize`: Sets the initial buffer size (in bytes) for storing data from SQL_LONG* data fields. Useful for avoiding resizes if buffer size is known before the call.
     * `multipleResultSets`: A boolean value indicating whether or not multiple result sets can be returned, should the database driver support it.
@@ -782,6 +784,7 @@ Utility function to execute a query on any open connection in the pool. Will get
 * **options?**: An object containing query options that affect query behavior. Valid properties include:
     * `cursor`: A boolean value indicating whether or not to return a cursor instead of results immediately. Can also be a string naming the cursor, which will assume that a cursor will be returned.
     * `fetchSize`: Used with a cursor, sets the number of rows that are returned on a call to `fetch` on the Cursor.
+    * `maxRows`: Limits the maximum number of rows returned from a query.
     * `timeout`: The amount of time (in seconds) that the query will attempt to execute before returning to the application.
     * `initialBufferSize`: Sets the initial buffer size (in bytes) for storing data from SQL_LONG* data fields. Useful for avoiding resizes if buffer size is known before the call.
     * `multipleResultSets`: A boolean value indicating whether or not multiple result sets can be returned, should the database driver support it.
@@ -976,6 +979,7 @@ Executes the prepared and optionally bound SQL statement.
 * **options?**: An object containing options that affect execution behavior. Valid properties include:
     * `cursor`: A boolean value indicating whether or not to return a cursor instead of results immediately. Can also be a string naming the cursor, which will assume that a cursor will be returned. Closing the `Statement` will also close the `Cursor`, but closing the `Cursor` will keep the `Statement` valid.
     * `fetchSize`: Used with a cursor, sets the number of rows that are returned on a call to `fetch` on the Cursor.
+    * `maxRows`: Limits the maximum number of rows returned from a query.
     * `timeout`: The amount of time (in seconds) that the query will attempt to execute before returning to the application.
     * `initialBufferSize`: Sets the initial buffer size (in bytes) for storing data from SQL_LONG* data fields. Useful for avoiding resizes if buffer size is known before the call.
 * **callback?**: The function called when `.execute` has finished execution. If no callback function is given, `.execute` will return a native JavaScript `Promise`. Callback signature is:
